@@ -129,7 +129,7 @@ func (a *Array) AddArray(v *Array) *Array {
 }
 
 // AddBinary ...
-func (a *Array) AddBinary(v *Binary) *Array {
+func (a *Array) AddBinary(v *primitive.Binary) *Array {
 	if a.d.immutable || !a.d.valid {
 		a.d.err = errImmutableInvalid
 		return a
@@ -162,12 +162,23 @@ func (a *Array) AddBool(v bool) *Array {
 }
 
 // AddDateTime ...
-func (a *Array) AddDateTime(v time.Time) *Array {
+func (a *Array) AddDateTime(v primitive.DateTime) *Array {
 	if a.d.immutable || !a.d.valid {
 		a.d.err = errImmutableInvalid
 		return a
 	}
 	a.d.AddDateTime(strconv.Itoa(a.n), v)
+	a.n++
+	return a
+}
+
+// AddDateTimeFromTime ...
+func (a *Array) AddDateTimeFromTime(v time.Time) *Array {
+	if a.d.immutable || !a.d.valid {
+		a.d.err = errImmutableInvalid
+		return a
+	}
+	a.d.AddDateTimeFromTime(strconv.Itoa(a.n), v)
 	a.n++
 	return a
 }
@@ -184,7 +195,7 @@ func (a *Array) AddNull() *Array {
 }
 
 // AddRegex ...
-func (a *Array) AddRegex(v Regex) *Array {
+func (a *Array) AddRegex(v primitive.Regex) *Array {
 	if a.d.immutable || !a.d.valid {
 		a.d.err = errImmutableInvalid
 		return a
@@ -194,13 +205,46 @@ func (a *Array) AddRegex(v Regex) *Array {
 	return a
 }
 
-// AddCode ...
-func (a *Array) AddCode(v Code) *Array {
+// AddDBPointer ...
+func (a *Array) AddDBPointer(v primitive.DBPointer) *Array {
 	if a.d.immutable || !a.d.valid {
 		a.d.err = errImmutableInvalid
 		return a
 	}
-	a.d.AddCode(strconv.Itoa(a.n), v)
+	a.d.AddDBPointer(strconv.Itoa(a.n), v)
+	a.n++
+	return a
+}
+
+// AddJavaScript ...
+func (a *Array) AddJavaScript(v primitive.JavaScript) *Array {
+	if a.d.immutable || !a.d.valid {
+		a.d.err = errImmutableInvalid
+		return a
+	}
+	a.d.AddJavaScript(strconv.Itoa(a.n), v)
+	a.n++
+	return a
+}
+
+// AddSymbol ...
+func (a *Array) AddSymbol(v primitive.Symbol) *Array {
+	if a.d.immutable || !a.d.valid {
+		a.d.err = errImmutableInvalid
+		return a
+	}
+	a.d.AddSymbol(strconv.Itoa(a.n), v)
+	a.n++
+	return a
+}
+
+// AddCodeScope ...
+func (a *Array) AddCodeScope(v CodeWithScope) *Array {
+	if a.d.immutable || !a.d.valid {
+		a.d.err = errImmutableInvalid
+		return a
+	}
+	a.d.AddCodeScope(strconv.Itoa(a.n), v)
 	a.n++
 	return a
 }
@@ -217,7 +261,7 @@ func (a *Array) AddInt32(v int32) *Array {
 }
 
 // AddTimestamp ...
-func (a *Array) AddTimestamp(v Timestamp) *Array {
+func (a *Array) AddTimestamp(v primitive.Timestamp) *Array {
 	if a.d.immutable || !a.d.valid {
 		a.d.err = errImmutableInvalid
 		return a
@@ -239,7 +283,7 @@ func (a *Array) AddInt64(v int64) *Array {
 }
 
 // AddDecimal128 ...
-func (a *Array) AddDecimal128(v Decimal128) *Array {
+func (a *Array) AddDecimal128(v primitive.Decimal128) *Array {
 	if a.d.immutable || !a.d.valid {
 		a.d.err = errImmutableInvalid
 		return a

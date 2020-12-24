@@ -289,7 +289,7 @@ func (v *ownedElement) Value() interface{} {
 
 	case TypeJavaScript:
 		// Skip length and omit trailing null byte.
-		return Code{Code: string(v.data[4:])}
+		return CodeWithScope{Code: string(v.data[4:])}
 
 	case TypeEmbeddedDocument:
 		src := &Doc{factory: v.pool, buf: v.data, valid: true, immutable: true}
@@ -305,7 +305,7 @@ func (v *ownedElement) Value() interface{} {
 		code := string(v.data[4 : strLen-1])
 		// XXX This is wrong!
 		scope := &Doc{}
-		return Code{Code: code, Scope: scope}
+		return CodeWithScope{Code: code, Scope: scope}
 
 	case TypeBinary:
 		// Skip the length to find the subtype byte

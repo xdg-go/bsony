@@ -107,8 +107,9 @@ type Binary struct {
 	Payload []byte
 }
 
-// A Code ...
-type Code struct {
+// A CodeWithScope ...  Unlike the MongoDB Go Driver's
+// `primitive.CodeWithScope`, the Scope must be a Doc from this package.
+type CodeWithScope struct {
 	Code  string
 	Scope *Doc
 }

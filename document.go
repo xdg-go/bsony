@@ -13,6 +13,7 @@ import (
 	"io"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -132,6 +133,8 @@ func (d *Doc) Concat(src *Doc) *Doc {
 }
 
 // Add ...
+//
+// XXX rethink which of these actually need pointer support? all or none?
 func (d *Doc) Add(k string, v interface{}) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
@@ -139,37 +142,120 @@ func (d *Doc) Add(k string, v interface{}) *Doc {
 	}
 
 	switch x := v.(type) {
+	// Type 01 - double
 	case float32:
 		return d.AddDouble(k, float64(x))
 	case float64:
 		return d.AddDouble(k, x)
+
+	// Type 02 - string
 	case string:
 		return d.AddString(k, x)
-	// doc
-	// array
-	// binary
+
+	// Type 03 - document
+	case Doc:
+		return d.AddDoc(k, &x)
+	case *Doc:
+		return d.AddDoc(k, x)
+
+	// Type 04 - array
+	case Array:
+		return d.AddArray(k, &x)
+	case *Array:
+		return d.AddArray(k, x)
+
+	// Type 05 - binary
+	case primitive.Binary:
+		return d.AddBinary(k, &x)
+	case *primitive.Binary:
+		return d.AddBinary(k, x)
+
+	// Type 06 - undefined (deprecated)
 	case primitive.Undefined:
 		return d.AddUndefined(k)
+
+	// Type 07 - ObjectID
 	case primitive.ObjectID:
 		return d.AddOID(k, x)
+
+	// Type 08 - boolean
 	case bool:
 		return d.AddBool(k, x)
-	// datetime
-	// null
-	// regex
-	// dbpointer
-	// code
-	// symbol
-	// code w/ scope
+
+	// Type 09 - UTC DateTime
+	case primitive.DateTime:
+		return d.AddDateTime(k, x)
+	case time.Time:
+		return d.AddDateTimeFromTime(k, x)
+	case *time.Time:
+		return d.AddDateTimeFromTime(k, *x)
+
+	// Type 0A - null
+	case nil:
+		return d.AddNull(k)
+
+	// Type 0B - regular expression
+	case primitive.Regex:
+		return d.AddRegex(k, x)
+	case *primitive.Regex:
+		return d.AddRegex(k, *x)
+
+	// Type 0C - DBPointer (deprecated)
+	case primitive.DBPointer:
+		return d.AddDBPointer(k, x)
+	case *primitive.DBPointer:
+		return d.AddDBPointer(k, *x)
+
+	// Type 0D - JavaScript code
+	case primitive.JavaScript:
+		return d.AddJavaScript(k, x)
+
+	// Type 0E - Symbol (deprecated)
+	case primitive.Symbol:
+		return d.AddSymbol(k, x)
+
+		// Type 0F - JavaScript code with scope
+	case CodeWithScope:
+		return d.AddCodeScope(k, x)
+	case primitive.CodeWithScope:
+		buf, err := bson.Marshal(x.Scope)
+		if err != nil {
+			d.err = fmt.Errorf("error marshaling scope for key '%s': %w", k, err)
+			return d
+		}
+		scope, err := d.factory.NewDocFromBytes(buf)
+		if err != nil {
+			d.err = fmt.Errorf("error marshaling scope for key '%s': buffer invalid: %w", k, err)
+			return d
+		}
+		return d.AddCodeScope(k, CodeWithScope{Code: string(x.Code), Scope: scope})
+
+	// Type 10 - 32-bit integer
 	case int32:
 		return d.AddInt32(k, x)
-	// int32
-	// timestamp
+
+		// Type 11 - timestamp
+	case primitive.Timestamp:
+		return d.AddTimestamp(k, x)
+
+	// Type 12 - 64-bit integer
 	case int64:
 		return d.AddInt64(k, x)
-	// decimal128
-	// minkey
-	// maxkey
+
+		// Type 13 - 128-bit decimal floating point
+	case primitive.Decimal128:
+		return d.AddDecimal128(k, x)
+	case *primitive.Decimal128:
+		return d.AddDecimal128(k, *x)
+
+	// Type FF - Min key
+	case primitive.MinKey:
+		return d.AddMinKey(k)
+
+	// Type 7F - Max key
+	case primitive.MaxKey:
+		return d.AddMaxKey(k)
+
 	default:
 		panic(fmt.Sprintf("unsupported type: %T", v))
 	}
@@ -236,7 +322,7 @@ func (d *Doc) AddArray(k string, v *Array) *Doc {
 }
 
 // AddBinary ...
-func (d *Doc) AddBinary(k string, v *Binary) *Doc {
+func (d *Doc) AddBinary(k string, v *primitive.Binary) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
@@ -244,7 +330,7 @@ func (d *Doc) AddBinary(k string, v *Binary) *Doc {
 	offset := len(d.buf) - 1
 	// Add space for type byte + len(key) + null byte + length + subtype byte +
 	// payload; payload for subtype 2 also adds payload length bytes
-	dataSize := len(v.Payload)
+	dataSize := len(v.Data)
 	if v.Subtype == 2 {
 		dataSize += 4
 	}
@@ -254,9 +340,9 @@ func (d *Doc) AddBinary(k string, v *Binary) *Doc {
 	d.buf[offset] = v.Subtype
 	offset++
 	if v.Subtype == 2 {
-		offset = writeInt32(d.buf, offset, int32(len(v.Payload)))
+		offset = writeInt32(d.buf, offset, int32(len(v.Data)))
 	}
-	copy(d.buf[offset:], v.Payload)
+	copy(d.buf[offset:], v.Data)
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
@@ -310,25 +396,23 @@ func (d *Doc) AddBool(k string, v bool) *Doc {
 }
 
 // AddDateTime ...
-func (d *Doc) AddDateTime(k string, v time.Time) *Doc {
+func (d *Doc) AddDateTime(k string, v primitive.DateTime) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
 	}
-	x := v.Unix()
-	if x < minDateTimeSec || x > maxDateTimeSec {
-		d.err = fmt.Errorf("time %v outside BSON DateTime range", v)
-		return d
-	}
-	x *= 1000
-	x += v.UnixNano() / 1000000
 	offset := len(d.buf) - 1
 	// Add space for type byte + len(key) + null byte + 8 for int64
 	d.grow(10 + len(k))
 	offset = writeTypeAndKey(d.buf, offset, TypeDateTime, k)
-	writeInt64(d.buf, offset, x)
+	writeInt64(d.buf, offset, int64(v))
 	d.buf[len(d.buf)-1] = 0
 	return d
+}
+
+// AddDateTimeFromTime ...
+func (d *Doc) AddDateTimeFromTime(k string, v time.Time) *Doc {
+	return d.AddDateTime(k, primitive.NewDateTimeFromTime(v))
 }
 
 // AddNull ...
@@ -346,24 +430,24 @@ func (d *Doc) AddNull(k string) *Doc {
 }
 
 // AddRegex ...
-func (d *Doc) AddRegex(k string, v Regex) *Doc {
+func (d *Doc) AddRegex(k string, v primitive.Regex) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
 	}
 	offset := len(d.buf) - 1
-	// Add space for type byte + len(key) + len(pattern) + null byte +
-	// len(flags) + null byte
-	d.grow(3 + len(k) + len(v.Pattern) + len(v.Flags))
-	offset = writeTypeAndKey(d.buf, offset, TypeInt32, k)
+	// Add space for type byte + len(key) + null byte + len(pattern) + null byte
+	// + len(flags) + null byte
+	d.grow(4 + len(k) + len(v.Pattern) + len(v.Options))
+	offset = writeTypeAndKey(d.buf, offset, TypeRegex, k)
 	offset = writeCString(d.buf, offset, v.Pattern)
-	writeCString(d.buf, offset, v.Flags)
+	writeCString(d.buf, offset, v.Options)
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
 
 // AddDBPointer ...
-func (d *Doc) AddDBPointer(k string, v DBPointer) *Doc {
+func (d *Doc) AddDBPointer(k string, v primitive.DBPointer) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
@@ -371,43 +455,31 @@ func (d *Doc) AddDBPointer(k string, v DBPointer) *Doc {
 	offset := len(d.buf) - 1
 	// Add space for type byte + len(key) + null byte + length + string + null
 	// byte + 12-byte ID
-	d.grow(19 + len(k) + len(v.Ref))
+	d.grow(19 + len(k) + len(v.DB))
 	offset = writeTypeAndKey(d.buf, offset, TypeDBPointer, k)
-	offset = writeString(d.buf, offset, v.Ref)
-	copy(d.buf[offset:], v.ID[:])
+	offset = writeString(d.buf, offset, v.DB)
+	copy(d.buf[offset:], v.Pointer[:])
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
 
-// AddCode ...
-func (d *Doc) AddCode(k string, v Code) *Doc {
+// AddJavaScript ...
+func (d *Doc) AddJavaScript(k string, v primitive.JavaScript) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
 	}
 	offset := len(d.buf) - 1
-	// Add space for type byte + len(key) + null byte + length + code + null
-	// byte + optional scope document length
-	dataSize := len(v.Code)
-	if v.Scope != nil {
-		dataSize += v.Scope.Len()
-	}
-	d.grow(7 + len(k) + dataSize)
-	if v.Scope != nil {
-		offset = writeTypeAndKey(d.buf, offset, TypeCodeWithScope, k)
-	} else {
-		offset = writeTypeAndKey(d.buf, offset, TypeJavaScript, k)
-	}
-	offset = writeString(d.buf, offset, v.Code)
-	if v.Scope != nil {
-		copy(d.buf[offset:], v.Scope.buf)
-	}
+	// Add space for type byte + len(key) + null byte + length + string + null byte
+	d.grow(7 + len(k) + len(v))
+	offset = writeTypeAndKey(d.buf, offset, TypeJavaScript, k)
+	writeString(d.buf, offset, string(v))
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
 
 // AddSymbol ...
-func (d *Doc) AddSymbol(k string, v string) *Doc {
+func (d *Doc) AddSymbol(k string, v primitive.Symbol) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
@@ -416,7 +488,30 @@ func (d *Doc) AddSymbol(k string, v string) *Doc {
 	// Add space for type byte + len(key) + null byte + string + null byte
 	d.grow(7 + len(k) + len(v))
 	offset = writeTypeAndKey(d.buf, offset, TypeSymbol, k)
-	writeString(d.buf, offset, v)
+	writeString(d.buf, offset, string(v))
+	d.buf[len(d.buf)-1] = 0
+	return d
+}
+
+// AddCodeScope ...
+func (d *Doc) AddCodeScope(k string, v CodeWithScope) *Doc {
+	if d.immutable || !d.valid {
+		d.err = errImmutableInvalid
+		return d
+	}
+	if v.Scope == nil {
+		return d.AddJavaScript(k, primitive.JavaScript(v.Code))
+	}
+	offset := len(d.buf) - 1
+	// CodeWithScope length is total length bytes + code length bytes + code
+	// length + null byte + scope document length
+	dataSize := 9 + len(v.Code) + v.Scope.Len()
+	// Add space for type byte + len(key) + null byte + dataSize
+	d.grow(2 + len(k) + dataSize)
+	offset = writeTypeAndKey(d.buf, offset, TypeCodeWithScope, k)
+	offset = writeInt32(d.buf, offset, int32(dataSize))
+	offset = writeString(d.buf, offset, v.Code)
+	copy(d.buf[offset:], v.Scope.buf)
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
@@ -437,7 +532,7 @@ func (d *Doc) AddInt32(k string, v int32) *Doc {
 }
 
 // AddTimestamp ...
-func (d *Doc) AddTimestamp(k string, v Timestamp) *Doc {
+func (d *Doc) AddTimestamp(k string, v primitive.Timestamp) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
@@ -446,8 +541,8 @@ func (d *Doc) AddTimestamp(k string, v Timestamp) *Doc {
 	// Add space for type byte + len(key) + null byte + 8 typestamp bytes
 	d.grow(10 + len(k))
 	offset = writeTypeAndKey(d.buf, offset, TypeTimestamp, k)
-	offset = writeUint32(d.buf, offset, v.Increment)
-	writeUint32(d.buf, offset, v.Seconds)
+	offset = writeUint32(d.buf, offset, v.I)
+	writeUint32(d.buf, offset, v.T)
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
@@ -468,17 +563,18 @@ func (d *Doc) AddInt64(k string, v int64) *Doc {
 }
 
 // AddDecimal128 ...
-func (d *Doc) AddDecimal128(k string, v Decimal128) *Doc {
+func (d *Doc) AddDecimal128(k string, v primitive.Decimal128) *Doc {
 	if d.immutable || !d.valid {
 		d.err = errImmutableInvalid
 		return d
 	}
+	h, l := v.GetBytes()
 	offset := len(d.buf) - 1
 	// Add space for type byte + len(key) + null byte + 16 for decimal128
 	d.grow(18 + len(k))
-	offset = writeTypeAndKey(d.buf, offset, TypeInt64, k)
-	offset = writeUint64(d.buf, offset, v.L)
-	writeUint64(d.buf, offset, v.H)
+	offset = writeTypeAndKey(d.buf, offset, TypeDecimal128, k)
+	offset = writeUint64(d.buf, offset, l)
+	writeUint64(d.buf, offset, h)
 	d.buf[len(d.buf)-1] = 0
 	return d
 }
