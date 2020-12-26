@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type Element interface {
@@ -242,10 +244,10 @@ func (v *ownedElement) Value() interface{} {
 		return nil
 
 	case TypeMinKey:
-		return MinKey{}
+		return primitive.MinKey{}
 
 	case TypeMaxKey:
-		return MaxKey{}
+		return primitive.MaxKey{}
 
 	case TypeBoolean:
 		return v.data[0] != 0
@@ -271,17 +273,17 @@ func (v *ownedElement) Value() interface{} {
 	case TypeTimestamp:
 		inc := binary.LittleEndian.Uint32(v.data[0:4])
 		sec := binary.LittleEndian.Uint32(v.data[4:8])
-		return Timestamp{Seconds: sec, Increment: inc}
+		return primitive.Timestamp{T: sec, I: inc}
 
 	case TypeObjectID:
-		x := OID{}
+		x := primitive.ObjectID{}
 		copy(x[0:12], v.data)
 		return x
 
 	case TypeDecimal128:
 		l := binary.LittleEndian.Uint64(v.data[0:8])
 		h := binary.LittleEndian.Uint64(v.data[8:16])
-		return Decimal128{H: h, L: l}
+		return primitive.NewDecimal128(h, l)
 
 	case TypeString, TypeSymbol:
 		// Skip length and omit trailing null byte.
@@ -309,28 +311,28 @@ func (v *ownedElement) Value() interface{} {
 
 	case TypeBinary:
 		// Skip the length to find the subtype byte
-		x := Binary{Subtype: v.data[4]}
+		x := primitive.Binary{Subtype: v.data[4]}
 		payload := v.data[5:]
 		// Legacy subtype 2 has another length after subtype byte
 		if x.Subtype == 2 {
 			payload = payload[4:]
 		}
-		x.Payload = make([]byte, len(payload))
-		copy(x.Payload, payload)
+		x.Data = make([]byte, len(payload))
+		copy(x.Data, payload)
 		return x
 
 	case TypeRegex:
 		pattern, _ := readCString(v.data, 0)
 		// Skip first string and trailing null byte
-		flags, _ := readCString(v.data, len(pattern)+1)
-		return Regex{Pattern: pattern, Flags: flags}
+		options, _ := readCString(v.data, len(pattern)+1)
+		return primitive.Regex{Pattern: pattern, Options: options}
 
 	case TypeDBPointer:
 		strLen, _ := readInt32(v.data, 0)
 		ref := string(v.data[4 : 4+strLen])
-		id := OID{}
+		id := primitive.ObjectID{}
 		copy(id[0:12], v.data[strLen+5:])
-		return DBPointer{Ref: ref, ID: id}
+		return primitive.DBPointer{DB: ref, Pointer: id}
 	}
 
 	return nil

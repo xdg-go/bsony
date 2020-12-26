@@ -6,8 +6,6 @@
 
 package bsony
 
-import "math"
-
 // These constants uniquely refer to each BSON type.
 const (
 	TypeInvalid          Type = 0x00
@@ -33,9 +31,6 @@ const (
 	TypeMinKey           Type = 0xFF
 	TypeMaxKey           Type = 0x7F
 )
-
-var maxDateTimeSec int64 = math.MaxInt64 / 1000
-var minDateTimeSec int64 = math.MinInt64 / 1000
 
 // Type represents a BSON type.
 type Type byte
@@ -92,50 +87,10 @@ func (bt Type) String() string {
 	}
 }
 
-// An OID ...
-type OID [12]byte
-
-// A Regex ...
-type Regex struct {
-	Pattern string
-	Flags   string
-}
-
-// A Binary ...
-type Binary struct {
-	Subtype byte
-	Payload []byte
-}
-
-// A CodeWithScope ...  Unlike the MongoDB Go Driver's
-// `primitive.CodeWithScope`, the Scope must be a Doc from this package.
+// A CodeWithScope represents Javascript code with an associated scope.  Unlike
+// the MongoDB Go Driver's `primitive.CodeWithScope`, the CodeWithScope must be
+// a `Doc` from this package.
 type CodeWithScope struct {
 	Code  string
 	Scope *Doc
 }
-
-// A Timestamp ...
-type Timestamp struct {
-	Seconds   uint32
-	Increment uint32
-}
-
-// A Decimal128 ...
-//
-// XXX Do we need to translate/construct?  Or let users grab bson/primitive if
-// needed?
-type Decimal128 struct {
-	H, L uint64
-}
-
-// A DBPointer ...
-type DBPointer struct {
-	Ref string
-	ID  OID
-}
-
-// A MinKey ...
-type MinKey struct{}
-
-// A MaxKey ...
-type MaxKey struct{}
