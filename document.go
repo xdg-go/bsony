@@ -90,21 +90,6 @@ func (d *Doc) CopyTo(dst []byte) int {
 	return copy(dst, d.buf)
 }
 
-// Map ...
-//
-// XXX Valid only until doc is released?
-func (d *Doc) Map() map[string]interface{} {
-	m := make(map[string]interface{})
-	iter := d.Iter()
-	for iter.Type() != TypeInvalid {
-		m[iter.Key()] = iter.Value()
-		iter.Next()
-	}
-	return m
-}
-
-// XXX should there be an "OMap" method?
-
 // Len ...
 func (d *Doc) Len() int {
 	return len(d.buf)
@@ -499,19 +484,26 @@ func (d *Doc) AddCodeScope(k string, v CodeWithScope) *Doc {
 		d.err = errImmutableInvalid
 		return d
 	}
-	if v.Scope == nil {
-		return d.AddJavaScript(k, primitive.JavaScript(v.Code))
-	}
 	offset := len(d.buf) - 1
 	// CodeWithScope length is total length bytes + code length bytes + code
 	// length + null byte + scope document length
-	dataSize := 9 + len(v.Code) + v.Scope.Len()
+	dataSize := 9 + len(v.Code)
+	// Nil scope treated as empty document
+	if v.Scope != nil {
+		dataSize += v.Scope.Len()
+	} else {
+		dataSize += 5
+	}
 	// Add space for type byte + len(key) + null byte + dataSize
 	d.grow(2 + len(k) + dataSize)
 	offset = writeTypeAndKey(d.buf, offset, TypeCodeWithScope, k)
 	offset = writeInt32(d.buf, offset, int32(dataSize))
 	offset = writeString(d.buf, offset, v.Code)
-	copy(d.buf[offset:], v.Scope.buf)
+	if v.Scope != nil {
+		copy(d.buf[offset:], v.Scope.buf)
+	} else {
+		d.buf[offset] = 5
+	}
 	d.buf[len(d.buf)-1] = 0
 	return d
 }

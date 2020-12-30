@@ -12,7 +12,7 @@ package bsony
 type Factory struct {
 	pool ByteSlicePool
 
-	// XXX should we have pools for D, A, Element, etc.?
+	// XXX should we have pools for D, A, Value, etc.?
 }
 
 // New returns a new Factory based on a byte slice pool with minimum slice

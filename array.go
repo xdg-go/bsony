@@ -18,7 +18,7 @@ import (
 type Array struct {
 	// internally, an A is a wrapper around a D, plus an indication of its
 	// length.
-	n int  // number of elements
+	n int  // number of values
 	d *Doc // underlying storage; keys are indices
 }
 

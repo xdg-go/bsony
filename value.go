@@ -10,31 +10,34 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-type Element interface {
+var errAlreadyReleased = errors.New("value released")
+
+type Value interface {
+	Clone() Value
+	CopyTo(dst []byte) int
+	Err() error
+	Get() interface{}
+	Len() int
 	Release()
 	Type() Type
-	Data() []byte
-	Err() error
-	Clone() *Element
-	Value() interface{}
 }
 
-// A ownedElement ...
-type ownedElement struct {
-	pool *Factory
-	t    Type
-	data []byte
-	owns bool // true if this Element is responsible for putting back to the pool
-	err  error
+// A unsafeValue is an immutable view into a buffer.  It must
+// not be used past the lifetime of that container.
+type unsafeValue struct {
+	factory *Factory
+	t       Type
+	data    []byte
+	err     error
 }
 
-// unsafe element is not owned -- it's just a view into another buffer.
+// unsafe value is not owned -- it's just a view into another buffer.
 // it constructs a view of the given type, given that `src` is the beginning of
 // the data (i.e. after the key of a document/array)
 //
-// XXX should we have a sync.Pool for Elements?
-func newElementUnsafe(bx *Factory, src []byte, t Type) *ownedElement {
-	v := &ownedElement{pool: bx, t: t}
+// XXX should we have a sync.Pool for Values?
+func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
+	v := &unsafeValue{factory: f, t: t}
 	var err error
 	switch t {
 	case TypeNull, TypeUndefined, TypeMinKey, TypeMaxKey:
@@ -128,8 +131,8 @@ func newElementUnsafe(bx *Factory, src []byte, t Type) *ownedElement {
 			return v
 		}
 		// encoded doc length must consume rest of the bytes
-		docLen, _ := readInt32(src, 4+int(strLen))
-		if length-strLen-docLen != 0 {
+		docLen, _ := readInt32(src, 8+int(strLen))
+		if length != 8+strLen+docLen {
 			v.err = fmt.Errorf("%s scope size invalid", t)
 			return v
 		}
@@ -196,52 +199,54 @@ func newElementUnsafe(bx *Factory, src []byte, t Type) *ownedElement {
 	return v
 }
 
-// Release ...
-func (v *ownedElement) Release() {
-	v.pool = nil
-	// XXX set error for "already released"?
-	if v.owns {
-		// XXX probably should be `pool.put` or something
-		v.pool.pool.Put(v.data)
-	}
-	// XXX clear data and type?
+// Clone returns a copy of an value, including copying the underlying data
+// buffer.
+func (v *unsafeValue) Clone() Value {
+	return newOwnedValue(v.factory, v)
 }
 
-// Type ...
-func (v *ownedElement) Type() Type {
-	return v.t
-}
-
-// Data ...
-func (v *ownedElement) Data() []byte {
-	return v.data
+func (v *unsafeValue) CopyTo(dst []byte) int {
+	return copy(dst, v.data)
 }
 
 // Err ...
-func (v *ownedElement) Err() error {
+func (v *unsafeValue) Err() error {
 	return v.err
 }
 
-// Clone ...
-// copies an element, taking ownership of the buffer
-func (v *ownedElement) Clone() *ownedElement {
-	buf := v.pool.pool.Resize(v.pool.pool.Get(), len(v.data))
-	copy(buf, v.data)
-	return &ownedElement{pool: v.pool, t: v.t, data: buf, err: v.err}
+func (v *unsafeValue) Len() int {
+	return len(v.data)
 }
 
-// Value returns ... (decoded copy of data)
-func (v *ownedElement) Value() interface{} {
+// Release ...
+func (v *unsafeValue) Release() {
+	v.factory = nil
+	v.data = nil
+	v.t = TypeInvalid
+	v.err = errAlreadyReleased
+}
+
+// Type ...
+func (v *unsafeValue) Type() Type {
+	return v.t
+}
+
+// Get returns a decoded copy of the value or nil if the value could not be
+// decoded.  It is safe to keep the result of a Get and release the source
+// document.
+func (v *unsafeValue) Get() interface{} {
 	if v.err != nil {
 		return nil
 	}
 
-	// XXX big type switch, calling out to decoding routines
 	// Can ignore errors on simple type reads because we know we have
-	// enough bytes.
+	// enough bytes from the constructor.
 	switch v.t {
-	case TypeNull, TypeUndefined:
+	case TypeNull:
 		return nil
+
+	case TypeUndefined:
+		return primitive.Undefined{}
 
 	case TypeMinKey:
 		return primitive.MinKey{}
@@ -285,28 +290,35 @@ func (v *ownedElement) Value() interface{} {
 		h := binary.LittleEndian.Uint64(v.data[8:16])
 		return primitive.NewDecimal128(h, l)
 
-	case TypeString, TypeSymbol:
+	case TypeString:
 		// Skip length and omit trailing null byte.
 		return string(v.data[4 : len(v.data)-1])
 
+	case TypeSymbol:
+		// Skip length and omit trailing null byte.
+		return primitive.Symbol(v.data[4 : len(v.data)-1])
+
 	case TypeJavaScript:
 		// Skip length and omit trailing null byte.
-		return CodeWithScope{Code: string(v.data[4:])}
+		return primitive.JavaScript(v.data[4 : len(v.data)-1])
 
 	case TypeEmbeddedDocument:
-		src := &Doc{factory: v.pool, buf: v.data, valid: true, immutable: true}
+		// XXX validate?
+		src := &Doc{factory: v.factory, buf: v.data, valid: true, immutable: true}
 		return src.Clone()
 
 	case TypeArray:
-		src := &Array{d: &Doc{factory: v.pool, buf: v.data, valid: true, immutable: true}}
+		// XXX validate?
+		src := &Array{d: &Doc{factory: v.factory, buf: v.data, valid: true, immutable: true}}
 		return src.Clone()
 
 	case TypeCodeWithScope:
-		// Skip length and omit trailing null byte.
-		strLen, _ := readInt32(v.data, 4)
-		code := string(v.data[4 : strLen-1])
-		// XXX This is wrong!
-		scope := &Doc{}
+		// Skip total CWS length to get just string length; omit trailing null
+		data := v.data[4:]
+		strLen, _ := readInt32(data, 0)
+		code := string(data[4 : 4+strLen-1])
+		src := &Doc{factory: v.factory, buf: data[4+strLen:], valid: true, immutable: true}
+		scope := src.Clone()
 		return CodeWithScope{Code: code, Scope: scope}
 
 	case TypeBinary:
@@ -329,9 +341,9 @@ func (v *ownedElement) Value() interface{} {
 
 	case TypeDBPointer:
 		strLen, _ := readInt32(v.data, 0)
-		ref := string(v.data[4 : 4+strLen])
+		ref := string(v.data[4 : 4+strLen-1])
 		id := primitive.ObjectID{}
-		copy(id[0:12], v.data[strLen+5:])
+		copy(id[0:12], v.data[strLen+4:])
 		return primitive.DBPointer{DB: ref, Pointer: id}
 	}
 
@@ -340,3 +352,30 @@ func (v *ownedElement) Value() interface{} {
 
 // XXX Have methods that return typed values?
 // func (...) Int32OK() (int32, bool)
+
+// An ownedValue contains a complete copy of its data and releases
+// it to the pool when the value is released.
+type ownedValue struct {
+	unsafeValue
+	buf []byte
+}
+
+// newOwnedValue creates an copy of an value.
+func newOwnedValue(f *Factory, e Value) *ownedValue {
+	var buf []byte
+	if e.Type() != TypeInvalid {
+		buf = f.pool.Resize(f.pool.Get(), e.Len())
+		e.CopyTo(buf)
+	}
+	return &ownedValue{
+		unsafeValue: unsafeValue{factory: f, data: buf, t: e.Type(), err: e.Err()},
+		buf:         buf,
+	}
+}
+
+// Release returns the owned buffer to the pool.
+func (o *ownedValue) Release() {
+	o.factory.release(o.buf)
+	o.buf = nil
+	o.unsafeValue.Release()
+}
