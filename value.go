@@ -40,6 +40,8 @@ func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
 	v := &unsafeValue{factory: f, t: t}
 	var err error
 	switch t {
+	case TypeInvalid:
+		// Sentinel
 	case TypeNull, TypeUndefined, TypeMinKey, TypeMaxKey:
 		v.data = src[0:0]
 
@@ -47,6 +49,9 @@ func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
 		if err = hasEnoughBytes(src, 0, 1); err != nil {
 			v.err = err
 			return v
+		}
+		if src[0] != 0 && src[0] != 1 {
+			v.err = fmt.Errorf("invalid boolean data byte %d", src[0])
 		}
 		v.data = src[0:1]
 
@@ -85,10 +90,19 @@ func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
 			return v
 		}
 		length, _ := readInt32(src, 0)
+		if length <= 0 {
+			v.err = fmt.Errorf("%s value has invalid, non-positive string length %d", t, length)
+			return v
+		}
 		// For these types, encoded length does not include itself
 		length = length + 4
 		if err = hasEnoughBytes(src, 0, int(length)); err != nil {
 			v.err = err
+			return v
+		}
+		// Requires null terminator or these types are invalid
+		if src[length-1] != 0 {
+			v.err = fmt.Errorf("%s value missing null terminator", t)
 			return v
 		}
 		v.data = src[0:length]
@@ -119,26 +133,34 @@ func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
 			return v
 		}
 		length, _ := readInt32(src, 0)
+		if length <= 0 {
+			v.err = fmt.Errorf("%s: value has invalid, non-positive length %d", t, length)
+			return v
+		}
 		// For this type, encoded length includes itself
 		if err = hasEnoughBytes(src, 0, int(length)); err != nil {
 			v.err = err
 			return v
 		}
+		// Requires null terminator for the scope or this type is invalid
+		if src[length-1] != 0 {
+			v.err = fmt.Errorf("%s: scope missing null terminator", t)
+			return v
+		}
 		// encoded string length must leave room for doc length + null
 		strLen, _ := readInt32(src, 4)
+		if strLen == 0 {
+			v.err = fmt.Errorf("%s: value has invalid, non-positive string length %d", t, strLen)
+			return v
+		}
 		if length-strLen < 5 {
-			v.err = fmt.Errorf("%s string length too long", t)
+			v.err = fmt.Errorf("%s: string length too long", t)
 			return v
 		}
 		// encoded doc length must consume rest of the bytes
 		docLen, _ := readInt32(src, 8+int(strLen))
 		if length != 8+strLen+docLen {
-			v.err = fmt.Errorf("%s scope size invalid", t)
-			return v
-		}
-		// Requires null terminator or this type are invalid
-		if src[length-1] != 0 {
-			v.err = fmt.Errorf("%s scope missing null terminator", t)
+			v.err = fmt.Errorf("%s: scope size invalid", t)
 			return v
 		}
 		v.data = src[0:length]
@@ -150,15 +172,27 @@ func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
 			return v
 		}
 		length, _ := readInt32(src, 0)
+		subtype := src[4]
 		// For this type, encoded length does not includes itself or the
 		// binary subtype byte
-		length = length + 5
-		if err = hasEnoughBytes(src, 0, int(length)); err != nil {
+		if err = hasEnoughBytes(src, 0, int(length)+5); err != nil {
 			v.err = err
 			return v
 		}
-		// XXX Maybe check subtype 2 length is valid
-		v.data = src[0:length]
+		// Subtype 2 also has a length to verify; it should be the outer length
+		// minus the 4 bytes for the inner length.
+		if subtype == 2 {
+			innerLength, err := readInt32(src, 5)
+			if err != nil {
+				v.err = err
+				return v
+			}
+			if length-4 != innerLength {
+				v.err = fmt.Errorf("binary subtype 2 inner length %d conflicts with outer length %d", innerLength, length)
+				return v
+			}
+		}
+		v.data = src[0 : length+5]
 
 	case TypeRegex:
 		// Minimum bytes: 2 cstring null terminators
@@ -187,14 +221,26 @@ func newValueUnsafe(f *Factory, src []byte, t Type) *unsafeValue {
 			return v
 		}
 		length, _ := readInt32(src, 0)
-		// For this type, encoded length does not include itself or
-		// trailing 12 bytes of OID
-		length = length + 16
-		if err = hasEnoughBytes(src, 0, int(length)); err != nil {
+		if length <= 0 {
+			v.err = fmt.Errorf("%s value has invalid, non-positive string length %d", t, length)
+			return v
+		}
+		// For this type, encoded length does not include itself
+		length += 4
+		// Total length adds trailing 12 bytes of OID
+		totalLength := length + 12
+		if err = hasEnoughBytes(src, 0, int(totalLength)); err != nil {
 			v.err = err
 			return v
 		}
-		v.data = src[0:length]
+		// Requires null terminator of string part
+		if src[length-1] != 0 {
+			v.err = fmt.Errorf("%s value missing null terminator", t)
+			return v
+		}
+		v.data = src[0:totalLength]
+	default:
+		v.err = fmt.Errorf("Unknown BSON type '%02x'", t)
 	}
 	return v
 }
@@ -214,6 +260,7 @@ func (v *unsafeValue) Err() error {
 	return v.err
 }
 
+// Len ...
 func (v *unsafeValue) Len() int {
 	return len(v.data)
 }

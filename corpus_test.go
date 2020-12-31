@@ -50,6 +50,16 @@ func TestCorpus(t *testing.T) {
 	}
 }
 
+func shouldSkip(description string) bool {
+	// we don't validate UTF-8 within string-like types
+	patterns := []string{"invalid UTF-8", "bad UTF-8"}
+	for _, p := range patterns {
+		if strings.Contains(description, p) {
+			return true
+		}
+	}
+	return false
+}
 func testCorpusFile(t *testing.T, file string) {
 	t.Helper()
 	guts, err := ioutil.ReadFile(file)
@@ -59,7 +69,13 @@ func testCorpusFile(t *testing.T, file string) {
 	cases := &corpusData{}
 	json.Unmarshal(guts, cases)
 	for _, c := range cases.Valid {
-		t.Run(c.Description, func(t *testing.T) { testValidCase(t, c, cases.TestKey) })
+		t.Run("valid "+c.Description, func(t *testing.T) { testValidCase(t, c, cases.TestKey) })
+	}
+	for _, c := range cases.DecodeErrors {
+		if shouldSkip(c.Description) {
+			continue
+		}
+		t.Run("invalid "+c.Description, func(t *testing.T) { testErrorCase(t, c) })
 	}
 }
 
@@ -72,15 +88,95 @@ func testValidCase(t *testing.T, c validCase, k string) {
 	}
 }
 
-func BSONToBSON(t *testing.T, s string) string {
+func testErrorCase(t *testing.T, c errorCase) {
+	t.Helper()
+	doc, err := docFromHex(t, c.Bson)
+	if err != nil {
+		return
+	}
+
+	err = visitDoc(t, doc)
+	if err != nil {
+		return
+	}
+
+	t.Fatal("expected error, but got none")
+}
+
+func visitDoc(t *testing.T, d *Doc) error {
+	iter := d.Iter()
+	for iter.Next() {
+		if iter.Err() != nil {
+			return iter.Err()
+		}
+		switch iter.Type() {
+		case TypeEmbeddedDocument:
+			d, _ := iter.ValueUnsafe().Get().(*Doc)
+			err := visitDoc(t, d)
+			if err != nil {
+				return err
+			}
+		case TypeArray:
+			a, _ := iter.ValueUnsafe().Get().(*Array)
+			err := visitArray(t, a)
+			if err != nil {
+				return err
+			}
+		case TypeCodeWithScope:
+			cs, _ := iter.ValueUnsafe().Get().(CodeWithScope)
+			err := visitDoc(t, cs.Scope)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func visitArray(t *testing.T, a *Array) error {
+	iter := a.Iter()
+	for iter.Next() {
+		if iter.Err() != nil {
+			return iter.Err()
+		}
+		switch iter.Type() {
+		case TypeEmbeddedDocument:
+			d, _ := iter.ValueUnsafe().Get().(*Doc)
+			err := visitDoc(t, d)
+			if err != nil {
+				return err
+			}
+		case TypeArray:
+			a, _ := iter.ValueUnsafe().Get().(*Array)
+			err := visitArray(t, a)
+			if err != nil {
+				return err
+			}
+		case TypeCodeWithScope:
+			cs, _ := iter.ValueUnsafe().Get().(CodeWithScope)
+			err := visitDoc(t, cs.Scope)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func docFromHex(t *testing.T, s string) (*Doc, error) {
 	t.Helper()
 	raw, err := hex.DecodeString(s)
 	if err != nil {
 		t.Fatalf("error decoding %s", s)
 	}
-	cB, err := fct.NewDocFromBytes(raw)
+	return fct.NewDocFromBytes(raw)
+}
+
+func BSONToBSON(t *testing.T, s string) string {
+	t.Helper()
+	cB, err := docFromHex(t, s)
 	if err != nil {
-		t.Fatalf("invalid BSON from %s", s)
+		t.Fatal(err)
 	}
 	defer func() { cB.Release() }()
 	cB2 := fct.NewDoc()

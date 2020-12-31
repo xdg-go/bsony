@@ -43,6 +43,13 @@ func (i *DocIter) parseNextValue() {
 
 	// Data begins after type byte, key length and null byte
 	i.vu = newValueUnsafe(i.d.factory, i.d.buf[i.offset+i.keyLen+2:], Type(i.d.buf[i.offset]))
+
+	// If type byte, key, null and i.vu length consumes the full buffer
+	// including the terminator byte, then the i.vu has a bad internal length
+	if i.offset+i.keyLen+len(i.vu.data)+2 >= i.d.Len() {
+		i.vu.err = fmt.Errorf("invalid internal length exceeds container")
+	}
+
 }
 
 // Next advances the iterator, if possible.  It returns true if a value is
