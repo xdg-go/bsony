@@ -46,6 +46,7 @@ const (
 	rfc3339Milli = "2006-01-02T15:04:05.999Z07:00"
 )
 
+// This function calls into array_test.go so as to use the same input data.
 func TestAdd(t *testing.T) {
 	fct := New()
 	testArray := fct.NewArray()
@@ -94,10 +95,15 @@ func TestAdd(t *testing.T) {
 		{"maxkey", "a", primitive.MaxKey{}, "080000007F610000"},
 	}
 
-	for _, c := range addCases {
-		d := fct.NewDoc()
-		d.Add(c.K, c.V)
-		compareDocHex(t, d, c.D, c.L)
-		d.Release()
-	}
+	t.Run("Doc.Add", func(t *testing.T) {
+		for _, c := range addCases {
+			d := fct.NewDoc()
+			d.Add(c.K, c.V)
+			compareDocHex(t, d, c.D, c.L)
+			d.Release()
+		}
+	})
+
+	// Delegate array testing with same data
+	testArrayAdd(t, addCases)
 }

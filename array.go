@@ -139,6 +139,17 @@ func (a *Array) AddBinary(v *primitive.Binary) *Array {
 	return a
 }
 
+// AddUndefined
+func (a *Array) AddUndefined() *Array {
+	if a.d.immutable || !a.d.valid {
+		a.d.err = errImmutableInvalid
+		return a
+	}
+	a.d.AddUndefined(strconv.Itoa(a.n))
+	a.n++
+	return a
+}
+
 // AddOID ...
 func (a *Array) AddOID(v primitive.ObjectID) *Array {
 	if a.d.immutable || !a.d.valid {

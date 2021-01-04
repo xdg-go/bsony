@@ -30,7 +30,7 @@ func compareArrayHex(t *testing.T, a *Array, want string, label string) {
 	got := strings.ToLower(hex.EncodeToString(a.d.buf))
 	want = strings.ToLower(want)
 	if got != want {
-		t.Errorf("%s: encoded doc incorrect.\nGot:  %s\nWant: %s", label, got, want)
+		t.Errorf("%s: encoded array incorrect.\nGot:  %s\nWant: %s", label, got, want)
 	}
 	return
 }
