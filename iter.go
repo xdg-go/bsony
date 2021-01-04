@@ -99,9 +99,6 @@ func (i *DocIter) Key() string {
 // Value returns a copy of the current value of the iterator or nil if the
 // end of the document has been reached or if the value could not be parsed.
 // It is safe to keep the value copy and release the source document.
-//
-// XXX but this value has no key?!  How is this better/different than Value?
-// (Not decoded.)
 func (i *DocIter) Value() Value {
 	if i.Type() == TypeInvalid {
 		return nil
@@ -140,8 +137,6 @@ func (i *DocIter) Err() error {
 	return i.vu.Err()
 }
 
-// XXX ArrayIter needs to be rewritten to match DocIter
-
 // An ArrayIter ...
 //
 // WARNING: the ArrayIter directly references the underlying data; because
@@ -149,7 +144,7 @@ func (i *DocIter) Err() error {
 // the source array.
 type ArrayIter struct {
 	di *DocIter
-	n  int // XXX this doesn't seem wired up?
+	n  int
 }
 
 func newArrayIter(a *Array) *ArrayIter {

@@ -61,9 +61,9 @@ func (a *Array) Len() int {
 
 // Concat ..
 func (a *Array) Concat(src *Array) *Array {
-	// XXX Need to iterate src and add valueUnsafe to keep key indexes
-	// correct.
-	return a
+	// XXX Unimplemented: Need to iterate src and add valueUnsafe to keep key
+	// indexes correct.
+	panic("unimplemented")
 }
 
 // Clone ...

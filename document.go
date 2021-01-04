@@ -23,8 +23,6 @@ var errMissingTerminator = errors.New("document buffer missing null terminator")
 var errImmutableInvalid = errors.New("can't modify immutable or invalid document")
 var errBufferReleased = errors.New("buffer released")
 
-// XXX Wonder if A and D should implement a common interface?
-
 // A Doc object represents a BSON document
 type Doc struct {
 	factory   *Factory
@@ -81,8 +79,8 @@ func (d *Doc) Iter() *DocIter {
 
 // Reader ...
 func (d *Doc) Reader() (io.Reader, error) {
-	// XXX unimplemented
-	return nil, nil
+	// XXX Unimplemented
+	panic("unimplemented")
 }
 
 // CopyTo ...
