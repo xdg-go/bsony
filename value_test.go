@@ -229,3 +229,42 @@ func TestNewUnsafeValue_BadCodeWithScope(t *testing.T) {
 		uv.Release()
 	}
 }
+
+func TestValueCloning(t *testing.T) {
+	fct = New()
+	bufStr := "0e00000002610002000000620000"
+	buf, _ := hex.DecodeString(bufStr)
+	doc, err := fct.NewDocFromBytes(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iter := doc.Iter()
+	iter.Next()
+	v1 := iter.ValueUnsafe()
+	uv, ok := v1.(*unsafeValue)
+	if !ok {
+		t.Fatal("ValueUnsafe was not unsafeValue")
+	}
+	if &(uv.data[0]) != &(buf[07]) {
+		t.Fatal("unsafeValue was not view into document buffer")
+	}
+	v2 := v1.Clone()
+	ov, ok := v2.(*ownedValue)
+	if !ok {
+		t.Fatal("Cloned unsafeValue was not ownedValue")
+	}
+	if &(ov.unsafeValue.data[0]) == &(uv.data[0]) {
+		t.Fatal("Clone of unsafeValue did not copy data")
+	}
+	v3 := v2.Clone()
+	ov2, ok := v3.(*ownedValue)
+	if !ok {
+		t.Fatal("Cloned ownedValue was not ownedValue")
+	}
+	if &(ov2.unsafeValue.data[0]) == &(ov.unsafeValue.data[0]) {
+		t.Fatal("Clone of ownedValue did not copy data")
+	}
+	v1.Release()
+	v2.Release()
+	v3.Release()
+}
